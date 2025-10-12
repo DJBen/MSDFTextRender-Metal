@@ -1,11 +1,10 @@
 import Metal
 import MetalKit
-import simd
 import MSDFText
+import simd
 
 @MainActor
 final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
-
     private enum Constants {
         static let glyphSize: Float = 64
         static let glyphPxRange: Float = 4
@@ -33,7 +32,8 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
 
     init?(metalKitView: MTKView) {
         guard let device = metalKitView.device ?? MTLCreateSystemDefaultDevice(),
-              let commandQueue = device.makeCommandQueue() else {
+              let commandQueue = device.makeCommandQueue()
+        else {
             return nil
         }
 
@@ -49,7 +49,7 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
                 device: device,
                 pixelFormat: metalKitView.colorPixelFormat,
                 sampleCount: metalKitView.sampleCount,
-                atlasPxRange: Constants.glyphPxRange
+                atlasPxRange: Constants.glyphPxRange,
             )
         } catch {
             print("Failed to build MSDFText renderer: \(error)")
@@ -66,7 +66,7 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
         let initialSize = Constants.glyphSize * Float(metalKitView.contentScaleFactor)
         guard let geometry = SingleGlyphRenderer.makeGlyphGeometry(
             device: device,
-            size: initialSize
+            size: initialSize,
         ) else {
             return nil
         }
@@ -79,7 +79,7 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
             vertexBuffer: vertexBuffer,
             indexBuffer: indexBuffer,
             indexCount: indexCount,
-            bounds: CGSize(width: CGFloat(initialSize), height: CGFloat(initialSize))
+            bounds: CGSize(width: CGFloat(initialSize), height: CGFloat(initialSize)),
         )
 
         super.init()
@@ -102,7 +102,8 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
         }
 
         guard let renderPassDescriptor = view.currentRenderPassDescriptor,
-              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)
+        else {
             commandBuffer.commit()
             return
         }
@@ -113,7 +114,7 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
             encoder: renderEncoder,
             mesh: mesh,
             atlasTexture: glyphTexture,
-            style: style
+            style: style,
         )
         renderEncoder.endEncoding()
 
@@ -123,7 +124,7 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+    func mtkView(_: MTKView, drawableSizeWillChange size: CGSize) {
         updateProjection(for: size)
         updateModelViewMatrix(for: size)
     }
@@ -141,8 +142,10 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
 
     private func updateProjection(for drawableSize: CGSize) {
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
-        msdfRenderer.setOrthoProjection(width: Float(drawableSize.width),
-                                        height: Float(drawableSize.height))
+        msdfRenderer.setOrthoProjection(
+            width: Float(drawableSize.width),
+            height: Float(drawableSize.height),
+        )
     }
 
     private func updateModelViewMatrix(for drawableSize: CGSize) {
@@ -169,57 +172,79 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
             throw NSError(domain: "SingleGlyphRenderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No r.png from bundle"])
         }
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil)
+        else {
             throw NSError(domain: "SingleGlyphRenderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load r.png from bundle"])
         }
         return try loader.newTexture(cgImage: cgImage, options: options)
     }
 
-    private static func makeGlyphGeometry(device: MTLDevice,
-                                          size: Float) -> (vertexBuffer: MTLBuffer,
-                                                           indexBuffer: MTLBuffer,
-                                                           indexCount: Int)? {
+    private static func makeGlyphGeometry(
+        device: MTLDevice,
+        size: Float,
+    ) -> (
+        vertexBuffer: MTLBuffer,
+        indexBuffer: MTLBuffer,
+        indexCount: Int
+    )? {
         let indices: [UInt32] = [
             0, 1, 2,
             0, 2, 3,
         ]
 
         let vertexCount = Self.unitVerticesTemplate.count
-        guard let vertexBuffer = device.makeBuffer(length: vertexCount * MemoryLayout<MSDFText.MSDFGlyphVertex>.stride,
-                                                   options: .storageModeShared),
-              let indexBuffer = device.makeBuffer(bytes: indices,
-                                                  length: indices.count * MemoryLayout<UInt32>.stride,
-                                                  options: .storageModeShared) else {
+        guard let vertexBuffer = device.makeBuffer(
+            length: vertexCount * MemoryLayout<MSDFText.MSDFGlyphVertex>.stride,
+            options: .storageModeShared,
+        ),
+            let indexBuffer = device.makeBuffer(
+                bytes: indices,
+                length: indices.count * MemoryLayout<UInt32>.stride,
+                options: .storageModeShared,
+            )
+        else {
             return nil
         }
 
         vertexBuffer.label = "SingleGlyphVertices"
         indexBuffer.label = "SingleGlyphIndices"
 
-        Self.writeVertices(to: vertexBuffer,
-                           using: Self.unitVerticesTemplate,
-                           size: size)
+        Self.writeVertices(
+            to: vertexBuffer,
+            using: Self.unitVerticesTemplate,
+            size: size,
+        )
 
         return (vertexBuffer, indexBuffer, indices.count)
     }
 
     private static let unitVerticesTemplate: [MSDFText.MSDFGlyphVertex] = [
-        MSDFText.MSDFGlyphVertex(position: SIMD3<Float>(0, 1, 0),
-                                 texCoord: SIMD2<Float>(0, 1)),
-        MSDFText.MSDFGlyphVertex(position: SIMD3<Float>(0, 0, 0),
-                                 texCoord: SIMD2<Float>(0, 0)),
-        MSDFText.MSDFGlyphVertex(position: SIMD3<Float>(1, 0, 0),
-                                 texCoord: SIMD2<Float>(1, 0)),
-        MSDFText.MSDFGlyphVertex(position: SIMD3<Float>(1, 1, 0),
-                                 texCoord: SIMD2<Float>(1, 1)),
+        MSDFText.MSDFGlyphVertex(
+            position: SIMD3<Float>(0, 1, 0),
+            texCoord: SIMD2<Float>(0, 1),
+        ),
+        MSDFText.MSDFGlyphVertex(
+            position: SIMD3<Float>(0, 0, 0),
+            texCoord: SIMD2<Float>(0, 0),
+        ),
+        MSDFText.MSDFGlyphVertex(
+            position: SIMD3<Float>(1, 0, 0),
+            texCoord: SIMD2<Float>(1, 0),
+        ),
+        MSDFText.MSDFGlyphVertex(
+            position: SIMD3<Float>(1, 1, 0),
+            texCoord: SIMD2<Float>(1, 1),
+        ),
     ]
 
-    private static func writeVertices(to buffer: MTLBuffer,
-                                      using template: [MSDFText.MSDFGlyphVertex],
-                                      size: Float) {
+    private static func writeVertices(
+        to buffer: MTLBuffer,
+        using template: [MSDFText.MSDFGlyphVertex],
+        size: Float,
+    ) {
         let count = template.count
         let pointer = buffer.contents().bindMemory(to: MSDFText.MSDFGlyphVertex.self, capacity: count)
-        for index in 0..<count {
+        for index in 0 ..< count {
             var vertex = template[index]
             vertex.position.x *= size
             vertex.position.y *= size
@@ -228,9 +253,11 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
     }
 
     private func updateGlyphVertices() {
-        SingleGlyphRenderer.writeVertices(to: vertexBuffer,
-                                          using: SingleGlyphRenderer.unitVerticesTemplate,
-                                          size: glyphSize)
+        SingleGlyphRenderer.writeVertices(
+            to: vertexBuffer,
+            using: SingleGlyphRenderer.unitVerticesTemplate,
+            size: glyphSize,
+        )
     }
 }
 
@@ -249,6 +276,6 @@ private func matrix_ortho(width: Float, height: Float) -> matrix_float4x4 {
         SIMD4<Float>(sx, 0, 0, 0),
         SIMD4<Float>(0, sy, 0, 0),
         SIMD4<Float>(0, 0, 1, 0),
-        SIMD4<Float>(-1, 1, 0, 1)
+        SIMD4<Float>(-1, 1, 0, 1),
     ))
 }

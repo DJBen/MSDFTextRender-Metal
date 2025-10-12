@@ -5,16 +5,15 @@
 //  Created by Sihao Lu on 10/8/25.
 //
 
+import CoreText
 import Metal
 import MetalKit
-import simd
-import CoreText
 import MSDFText
+import simd
 
 let maxBuffersInFlight = 3
 
 class Renderer: NSObject, MTKViewDelegate {
-    
     let device: MTLDevice
     let commandQueue: MTLCommandQueue
     var atlasTexture: MTLTexture
@@ -24,11 +23,11 @@ class Renderer: NSObject, MTKViewDelegate {
     var textMeshBuilder: MSDFText.MSDFTextMeshBuilder?
     var textMesh: MSDFText.MSDFTextMesh?
     var msdfRenderer: MSDFText.MSDFTextRenderer
-    
+
     let inFlightSemaphore = DispatchSemaphore(value: maxBuffersInFlight)
-    
+
     var zoomScale: CGFloat = 1.0
-    
+
     let margin: CGFloat = 16.0
     let baseFontSize: CGFloat = 36.0
     private let baseFont: CTFont
@@ -50,23 +49,25 @@ class Renderer: NSObject, MTKViewDelegate {
     @MainActor
     init?(metalKitView: MTKView) {
         guard let device = metalKitView.device,
-              let queue = device.makeCommandQueue() else {
+              let queue = device.makeCommandQueue()
+        else {
             return nil
         }
-        
+
         self.device = device
-        self.commandQueue = queue
-        
+        commandQueue = queue
+
         metalKitView.depthStencilPixelFormat = .invalid
         metalKitView.colorPixelFormat = .bgra8Unorm_srgb
         metalKitView.sampleCount = 1
-        
+
         guard let atlasJSONURL = Bundle.main.url(forResource: "SF-Pro-Display_mtsdf", withExtension: "json"),
-              let fontURL = Bundle.main.url(forResource: "SF-Pro-Display-Regular", withExtension: "otf") else {
+              let fontURL = Bundle.main.url(forResource: "SF-Pro-Display-Regular", withExtension: "otf")
+        else {
             print("Missing MSDF resources in bundle.")
             return nil
         }
-        
+
         do {
             atlasData = try MSDFText.MSDFAtlas.load(from: atlasJSONURL)
             atlasTexture = try Renderer.loadTexture(device: device)
@@ -74,13 +75,13 @@ class Renderer: NSObject, MTKViewDelegate {
             print("Unable to load atlas resources. Error: \(error)")
             return nil
         }
-        
+
         do {
             msdfRenderer = try MSDFTextRenderer(
                 device: device,
                 pixelFormat: metalKitView.colorPixelFormat,
                 sampleCount: metalKitView.sampleCount,
-                atlasPxRange: atlasData.atlas.distanceRange
+                atlasPxRange: atlasData.atlas.distanceRange,
             )
         } catch {
             print("Unable to create MSDFTextRenderer. Error: \(error)")
@@ -92,35 +93,35 @@ class Renderer: NSObject, MTKViewDelegate {
             hollowPipelineState = try Renderer.buildHollowPipeline(
                 device: device,
                 pixelFormat: metalKitView.colorPixelFormat,
-                sampleCount: metalKitView.sampleCount
+                sampleCount: metalKitView.sampleCount,
             )
         } catch {
             print("Unable to create hollow pipeline. Error: \(error)")
         }
 
         // Allocate a small ring of uniform buffers for hollow rendering
-        outlinedUniformBuffers = (0..<maxBuffersInFlight).compactMap { _ in
+        outlinedUniformBuffers = (0 ..< maxBuffersInFlight).compactMap { _ in
             device.makeBuffer(length: MemoryLayout<OutlinedUniforms>.stride, options: .storageModeShared)
         }
-        
+
         guard let ctFont = Renderer.loadFont(at: fontURL, size: baseFontSize) else {
             print("Unable to load SF Pro Display font.")
             return nil
         }
-        
+
         baseFont = ctFont
         currentFontSize = baseFontSize
         textMeshBuilder = MSDFText.MSDFTextMeshBuilder(device: device, atlas: atlasData, font: ctFont)
-        
+
         textContent = Renderer.composeParagraphText()
         super.init()
-        
+
         view = metalKitView
-        
+
         rebuildTextMesh(for: metalKitView)
         updateProjection(for: metalKitView.drawableSize)
     }
-    
+
     class func loadTexture(device: MTLDevice) throws -> MTLTexture {
         let textureLoader = MTKTextureLoader(device: device)
         let options: [MTKTextureLoader.Option: Any] = [
@@ -134,18 +135,20 @@ class Renderer: NSObject, MTKViewDelegate {
             throw NSError(domain: "Renderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No SF-Pro-Display_mtsdf.png from bundle"])
         }
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil)
+        else {
             throw NSError(domain: "Renderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load SF-Pro-Display_mtsdf.png from bundle"])
         }
         return try textureLoader.newTexture(cgImage: cgImage, options: options)
     }
-    
+
     private static func loadFont(at url: URL, size: CGFloat) -> CTFont? {
         guard let dataProvider = CGDataProvider(url: url as CFURL),
-              let cgFont = CGFont(dataProvider) else {
+              let cgFont = CGFont(dataProvider)
+        else {
             return nil
         }
-        
+
         // Use the new API for iOS 18+ and fall back to the deprecated one for older versions
         if #available(iOS 18.0, *) {
             var error: Unmanaged<CFError>?
@@ -153,7 +156,8 @@ class Renderer: NSObject, MTKViewDelegate {
                 if let cfError = error?.takeRetainedValue() {
                     let codeValue = CFErrorGetCode(cfError)
                     if let ctError = CTFontManagerError(rawValue: codeValue),
-                       ctError == .alreadyRegistered {
+                       ctError == .alreadyRegistered
+                    {
                         // Font already registered; safe to ignore.
                     } else {
                         print("Font registration error: \(cfError)")
@@ -166,7 +170,8 @@ class Renderer: NSObject, MTKViewDelegate {
                 if let cfError = error?.takeRetainedValue() {
                     let codeValue = CFErrorGetCode(cfError)
                     if let ctError = CTFontManagerError(rawValue: codeValue),
-                       ctError == .alreadyRegistered {
+                       ctError == .alreadyRegistered
+                    {
                         // Font already registered; safe to ignore.
                     } else {
                         print("Font registration error: \(cfError)")
@@ -176,25 +181,29 @@ class Renderer: NSObject, MTKViewDelegate {
         }
         return CTFontCreateWithGraphicsFont(cgFont, size, nil, nil)
     }
-    
+
     private func rebuildTextMesh(for view: MTKView) {
         guard let builder = textMeshBuilder else { return }
         updateFontForCurrentZoom()
         let viewScale = max(CGFloat(view.contentScaleFactor), 0.0001)
         let layoutWidth = max(view.bounds.width, 1.0)
         let layoutHeight = max(view.bounds.height, 1.0)
-        textMesh = builder.buildMesh(for: textContent,
-                                     in: CGSize(width: layoutWidth, height: layoutHeight),
-                                     margin: margin,
-                                     scale: viewScale)
+        textMesh = builder.buildMesh(
+            for: textContent,
+            in: CGSize(width: layoutWidth, height: layoutHeight),
+            margin: margin,
+            scale: viewScale,
+        )
     }
-    
+
     private func updateProjection(for drawableSize: CGSize) {
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
-        msdfRenderer.setOrthoProjection(width: Float(drawableSize.width),
-                                        height: Float(drawableSize.height))
+        msdfRenderer.setOrthoProjection(
+            width: Float(drawableSize.width),
+            height: Float(drawableSize.height),
+        )
     }
-    
+
     private func updateFontForCurrentZoom() {
         let targetSize = max(baseFontSize * zoomScale, 0.0001)
         guard abs(targetSize - currentFontSize) > 0.0001 else { return }
@@ -205,36 +214,39 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         _ = inFlightSemaphore.wait(timeout: .distantFuture)
-        
-        guard let textMesh = textMesh else {
+
+        guard let textMesh else {
             inFlightSemaphore.signal()
             return
         }
-        
+
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             inFlightSemaphore.signal()
             return
         }
-        
+
         commandBuffer.label = "TextCommandBuffer"
         commandBuffer.addCompletedHandler { [weak self] _ in
             self?.inFlightSemaphore.signal()
         }
-        
+
         guard let renderPassDescriptor = view.currentRenderPassDescriptor,
-              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)
+        else {
             commandBuffer.commit()
             return
         }
-        
+
         renderEncoder.label = "MSDF Text Encoder"
         if renderMode == 0 {
             // Default fill using the package shader/uniforms
             let style = MSDFText.MSDFTextRenderStyle(textColor: textColor)
-            msdfRenderer.encode(encoder: renderEncoder,
-                                mesh: textMesh,
-                                atlasTexture: atlasTexture,
-                                style: style)
+            msdfRenderer.encode(
+                encoder: renderEncoder,
+                mesh: textMesh,
+                atlasTexture: atlasTexture,
+                style: style,
+            )
         } else {
             // Hollow rendering using custom shader/uniforms supplied by the app
             var uniforms = OutlinedUniforms()
@@ -254,30 +266,30 @@ class Renderer: NSObject, MTKViewDelegate {
                     mesh: textMesh,
                     atlasTexture: atlasTexture,
                     uniformBuffer: ub,
-                    overridePipeline: hollowPipelineState
+                    overridePipeline: hollowPipelineState,
                 )
                 outlinedUniformBufferIndex = (outlinedUniformBufferIndex + 1) % outlinedUniformBuffers.count
             }
         }
         renderEncoder.endEncoding()
-        
+
         if let drawable = view.currentDrawable {
             commandBuffer.present(drawable)
         }
         commandBuffer.commit()
     }
-    
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         updateProjection(for: size)
         rebuildTextMesh(for: view)
     }
-    
+
     @MainActor
     func rebuildTextMeshForCurrentView() {
-        guard let view = view else { return }
+        guard let view else { return }
         rebuildTextMesh(for: view)
     }
-    
+
     @MainActor
     func updateZoom(zoomScale: CGFloat) {
         self.zoomScale = max(zoomScale, 0.0001)
@@ -285,13 +297,14 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     // MARK: - Public API
+
     @MainActor
     func setRenderMode(isHollow: Bool) {
         renderMode = isHollow ? 1 : 0
     }
-    
+
     private static func composeParagraphText() -> String {
-        return """
+        """
         ABCDEFGHIJKLMNOPQRSTUVWXYZ
         abcdefghijklmnopqrstuvwxyz
         1234567890
@@ -306,7 +319,7 @@ private func matrix_ortho(width: Float, height: Float) -> matrix_float4x4 {
         SIMD4<Float>(sx, 0, 0, 0),
         SIMD4<Float>(0, sy, 0, 0),
         SIMD4<Float>(0, 0, 1, 0),
-        SIMD4<Float>(-1, 1, 0, 1)
+        SIMD4<Float>(-1, 1, 0, 1),
     ))
 }
 
@@ -314,7 +327,7 @@ extension Renderer {
     static func buildHollowPipeline(
         device: MTLDevice,
         pixelFormat: MTLPixelFormat,
-        sampleCount: Int
+        sampleCount: Int,
     ) throws -> MTLRenderPipelineState {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.label = "Outlined.MSDF.Pipeline"

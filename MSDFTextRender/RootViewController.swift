@@ -1,12 +1,11 @@
-import UIKit
 import MetalKit
+import UIKit
 
 class RootViewController: UIViewController {
-
     var renderer: Renderer!
     var mtkView: MTKView!
     private var modeControl: UISegmentedControl?
-    
+
     private var zoomScale: CGFloat = 1.0
     private let minZoomScale: CGFloat = 0.5
     private let maxZoomScale: CGFloat = 3.0
@@ -30,7 +29,7 @@ class RootViewController: UIViewController {
         }
         mtkView = MTKView(frame: .zero, device: defaultDevice)
         mtkView.translatesAutoresizingMaskIntoConstraints = false
-        
+
         mtkView.backgroundColor = UIColor.black
         view.addSubview(mtkView)
 
@@ -52,41 +51,43 @@ class RootViewController: UIViewController {
 
         mtkView.delegate = renderer
         mtkView.isMultipleTouchEnabled = true
-        
+
         configureGestureRecognizers(for: mtkView)
         applyViewport(scale: zoomScale)
     }
-    
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard let mtkView = mtkView else { return }
+        guard let mtkView else { return }
         renderer?.mtkView(mtkView, drawableSizeWillChange: mtkView.drawableSize)
     }
-    
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         configureNavigationBar()
     }
-    
+
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
         renderer?.rebuildTextMeshForCurrentView()
     }
-    
+
     private func configureGestureRecognizers(for view: MTKView) {
-        let pinchRecognizer = UIPinchGestureRecognizer(target: self,
-                                                       action: #selector(handlePinch(_:)))
+        let pinchRecognizer = UIPinchGestureRecognizer(
+            target: self,
+            action: #selector(handlePinch(_:)),
+        )
         view.addGestureRecognizer(pinchRecognizer)
     }
-    
+
     private func applyViewport(scale: CGFloat) {
-        guard let renderer = renderer else { return }
+        guard let renderer else { return }
         let clampedScale = max(min(scale, maxZoomScale), minZoomScale)
         zoomScale = clampedScale
         renderer.updateZoom(zoomScale: zoomScale)
         renderer.rebuildTextMeshForCurrentView()
     }
-    
+
     @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
         switch recognizer.state {
         case .changed, .ended:
@@ -100,7 +101,7 @@ class RootViewController: UIViewController {
             break
         }
     }
-    
+
     private func configureNavigationBar() {
         guard let navigationBar = navigationController?.navigationBar else { return }
         navigationController?.navigationBar.prefersLargeTitles = false

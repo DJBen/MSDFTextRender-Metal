@@ -37,7 +37,7 @@ public final class MSDFTextMeshBuilder {
         self.atlas = atlas
         self.font = font
     }
-    
+
     public func updateFont(_ font: CTFont) {
         self.font = font
     }
@@ -46,7 +46,7 @@ public final class MSDFTextMeshBuilder {
         for text: String,
         in frameSize: CGSize,
         margin: CGFloat,
-        scale: CGFloat
+        scale: CGFloat,
     ) -> MSDFTextMesh? {
         guard frameSize.width > 0, frameSize.height > 0 else { return nil }
         let scaleValue = max(scale, 0.0001)
@@ -56,9 +56,11 @@ public final class MSDFTextMeshBuilder {
 
         let attrString = NSMutableAttributedString(string: text)
         let fullRange = NSRange(location: 0, length: attrString.length)
-        attrString.addAttribute(NSAttributedString.Key(kCTFontAttributeName as String),
-                                value: font,
-                                range: fullRange)
+        attrString.addAttribute(
+            NSAttributedString.Key(kCTFontAttributeName as String),
+            value: font,
+            range: fullRange,
+        )
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .left
@@ -113,11 +115,12 @@ public final class MSDFTextMeshBuilder {
                 CTRunGetGlyphs(run, CFRange(location: 0, length: 0), &glyphBuffer)
                 CTRunGetPositions(run, CFRange(location: 0, length: 0), &positionBuffer)
 
-                for glyphIndex in 0..<glyphCount {
+                for glyphIndex in 0 ..< glyphCount {
                     let glyph = glyphBuffer[glyphIndex]
 
                     guard let descriptor = atlas.descriptor(for: glyph),
-                          let atlasBounds = descriptor.atlasBounds else {
+                          let atlasBounds = descriptor.atlasBounds
+                    else {
                         continue
                     }
 
@@ -125,8 +128,8 @@ public final class MSDFTextMeshBuilder {
                     // Convert baseline to layout space (top-left origin, y-down).
                     let baselineX = Float(frameBoundingRect.origin.x + lineOrigin.x + glyphOrigin.x)
                     let baselineY = Float(frameBoundingRect.origin.y +
-                                          frameBoundingRect.height -
-                                          (lineOrigin.y + glyphOrigin.y))
+                        frameBoundingRect.height -
+                        (lineOrigin.y + glyphOrigin.y))
 
                     var quadMinX: Float = 0
                     var quadMaxX: Float = 0
@@ -145,9 +148,11 @@ public final class MSDFTextMeshBuilder {
                         quadMinY = min(top, bottom)
                         quadMaxY = max(top, bottom)
                     } else {
-                        var glyphRect = CTRunGetImageBounds(run,
-                                                            context,
-                                                            CFRange(location: glyphIndex, length: 1))
+                        var glyphRect = CTRunGetImageBounds(
+                            run,
+                            context,
+                            CFRange(location: glyphIndex, length: 1),
+                        )
 
                         if glyphRect.isNull || glyphRect.isEmpty {
                             continue
@@ -158,12 +163,14 @@ public final class MSDFTextMeshBuilder {
                             frameBoundingRect.height -
                             lineOrigin.y +
                             glyphOrigin.y
-                        let transform = CGAffineTransform(a: 1,
-                                                          b: 0,
-                                                          c: 0,
-                                                          d: -1,
-                                                          tx: boundsTransX,
-                                                          ty: boundsTransY)
+                        let transform = CGAffineTransform(
+                            a: 1,
+                            b: 0,
+                            c: 0,
+                            d: -1,
+                            tx: boundsTransX,
+                            ty: boundsTransY,
+                        )
                         glyphRect = glyphRect.applying(transform)
 
                         quadMinX = Float(glyphRect.minX)
@@ -183,14 +190,22 @@ public final class MSDFTextMeshBuilder {
                     let v1 = 1.0 - Float(atlasBounds.bottom) / atlasHeight
 
                     let baseIndex = UInt32(vertices.count)
-                    vertices.append(MSDFGlyphVertex(position: SIMD3<Float>(quadMinX, quadMaxY, 0),
-                                                    texCoord: SIMD2<Float>(u0, v1)))
-                    vertices.append(MSDFGlyphVertex(position: SIMD3<Float>(quadMinX, quadMinY, 0),
-                                                    texCoord: SIMD2<Float>(u0, v0)))
-                    vertices.append(MSDFGlyphVertex(position: SIMD3<Float>(quadMaxX, quadMinY, 0),
-                                                    texCoord: SIMD2<Float>(u1, v0)))
-                    vertices.append(MSDFGlyphVertex(position: SIMD3<Float>(quadMaxX, quadMaxY, 0),
-                                                    texCoord: SIMD2<Float>(u1, v1)))
+                    vertices.append(MSDFGlyphVertex(
+                        position: SIMD3<Float>(quadMinX, quadMaxY, 0),
+                        texCoord: SIMD2<Float>(u0, v1),
+                    ))
+                    vertices.append(MSDFGlyphVertex(
+                        position: SIMD3<Float>(quadMinX, quadMinY, 0),
+                        texCoord: SIMD2<Float>(u0, v0),
+                    ))
+                    vertices.append(MSDFGlyphVertex(
+                        position: SIMD3<Float>(quadMaxX, quadMinY, 0),
+                        texCoord: SIMD2<Float>(u1, v0),
+                    ))
+                    vertices.append(MSDFGlyphVertex(
+                        position: SIMD3<Float>(quadMaxX, quadMaxY, 0),
+                        texCoord: SIMD2<Float>(u1, v1),
+                    ))
 
                     indices.append(contentsOf: [
                         baseIndex,
@@ -228,23 +243,31 @@ public final class MSDFTextMeshBuilder {
         let finalWidth = CGFloat(layoutWidthFinal) * scaleValue
         let finalHeight = CGFloat(layoutHeightFinal) * scaleValue
 
-        guard let vertexBuffer = device.makeBuffer(bytes: vertices,
-                                                   length: vertices.count * MemoryLayout<MSDFGlyphVertex>.stride,
-                                                   options: .storageModeShared),
-              let indexBuffer = device.makeBuffer(bytes: indices,
-                                                  length: indices.count * MemoryLayout<UInt32>.stride,
-                                                  options: .storageModeShared) else {
+        guard let vertexBuffer = device.makeBuffer(
+            bytes: vertices,
+            length: vertices.count * MemoryLayout<MSDFGlyphVertex>.stride,
+            options: .storageModeShared,
+        ),
+            let indexBuffer = device.makeBuffer(
+                bytes: indices,
+                length: indices.count * MemoryLayout<UInt32>.stride,
+                options: .storageModeShared,
+            )
+        else {
             return nil
         }
 
         vertexBuffer.label = "MSDF Text Vertices"
         indexBuffer.label = "MSDF Text Indices"
 
-        return MSDFTextMesh(vertexBuffer: vertexBuffer,
-                            indexBuffer: indexBuffer,
-                            indexCount: indices.count,
-                            bounds: CGSize(width: finalWidth,
-                                           height: finalHeight))
+        return MSDFTextMesh(
+            vertexBuffer: vertexBuffer,
+            indexBuffer: indexBuffer,
+            indexCount: indices.count,
+            bounds: CGSize(
+                width: finalWidth,
+                height: finalHeight,
+            ),
+        )
     }
 }
-

@@ -31,11 +31,11 @@ public struct MSDFUniforms {
     public var _padding: SIMD2<Float>
 
     public init() {
-        self.projectionMatrix = matrix_identity_float4x4
-        self.modelViewMatrix = matrix_identity_float4x4
-        self.textColor = SIMD4<Float>(1, 1, 1, 1)
-        self.unitRange = SIMD2<Float>(0, 0)
-        self._padding = SIMD2<Float>(0, 0)
+        projectionMatrix = matrix_identity_float4x4
+        modelViewMatrix = matrix_identity_float4x4
+        textColor = SIMD4<Float>(1, 1, 1, 1)
+        unitRange = SIMD2<Float>(0, 0)
+        _padding = SIMD2<Float>(0, 0)
     }
 }
 
@@ -45,7 +45,6 @@ public final class MSDFTextRenderer {
     public let device: MTLDevice
     public var pipelineState: MTLRenderPipelineState
     public let depthState: MTLDepthStencilState
-
 
     public var projectionMatrix: matrix_float4x4 = matrix_identity_float4x4
     public var modelViewMatrix: matrix_float4x4 = matrix_identity_float4x4
@@ -67,20 +66,22 @@ public final class MSDFTextRenderer {
         atlasPxRange: Float,
         customLibrary: MTLLibrary? = nil,
         vertexFunctionName: String = "msdfVertexShader",
-        fragmentFunctionName: String = "msdfFragmentShader"
+        fragmentFunctionName: String = "msdfFragmentShader",
     ) throws {
         self.device = device
         self.atlasPxRange = atlasPxRange
 
         // Pipeline
         let vertexDescriptor = Self.buildMetalVertexDescriptor()
-        self.pipelineState = try Self.buildRenderPipeline(device: device,
-                                                          pixelFormat: pixelFormat,
-                                                          sampleCount: sampleCount,
-                                                          vertexDescriptor: vertexDescriptor,
-                                                          customLibrary: customLibrary,
-                                                          vertexFunctionName: vertexFunctionName,
-                                                          fragmentFunctionName: fragmentFunctionName)
+        pipelineState = try Self.buildRenderPipeline(
+            device: device,
+            pixelFormat: pixelFormat,
+            sampleCount: sampleCount,
+            vertexDescriptor: vertexDescriptor,
+            customLibrary: customLibrary,
+            vertexFunctionName: vertexFunctionName,
+            fragmentFunctionName: fragmentFunctionName,
+        )
         let depthDescriptor = MTLDepthStencilDescriptor()
         depthDescriptor.depthCompareFunction = .always
         depthDescriptor.isDepthWriteEnabled = false
@@ -90,15 +91,17 @@ public final class MSDFTextRenderer {
         self.depthState = depthState
 
         // Compute 256-byte aligned stride per Metal constant buffer requirements
-        self.styleUniformStrideAligned = ((styleUniformStride + 255) / 256) * 256
+        styleUniformStrideAligned = ((styleUniformStride + 255) / 256) * 256
 
         // Preallocate a small ring buffer for style-based encoding (aligned)
-        guard let ringBuffer = device.makeBuffer(length: styleUniformStrideAligned * styleUniformRingCount,
-                                                 options: .storageModeShared) else {
+        guard let ringBuffer = device.makeBuffer(
+            length: styleUniformStrideAligned * styleUniformRingCount,
+            options: .storageModeShared,
+        ) else {
             throw NSError(domain: "MSDFTextRenderer", code: -2, userInfo: [NSLocalizedDescriptionKey: "Unable to create ring buffer"])
         }
-        self.styleUniformRingBuffer = ringBuffer
-        self.styleUniformRingBuffer.label = "MSDFText.StyleUniformRing"
+        styleUniformRingBuffer = ringBuffer
+        styleUniformRingBuffer.label = "MSDFText.StyleUniformRing"
     }
 
     public func setOrthoProjection(width: Float, height: Float) {
@@ -108,7 +111,7 @@ public final class MSDFTextRenderer {
             SIMD4<Float>(sx, 0, 0, 0),
             SIMD4<Float>(0, sy, 0, 0),
             SIMD4<Float>(0, 0, 1, 0),
-            SIMD4<Float>(-1, 1, 0, 1)
+            SIMD4<Float>(-1, 1, 0, 1),
         ))
     }
 
@@ -116,7 +119,7 @@ public final class MSDFTextRenderer {
         encoder: MTLRenderCommandEncoder,
         mesh: MSDFTextMesh,
         atlasTexture: MTLTexture,
-        style: MSDFTextRenderStyle
+        style: MSDFTextRenderStyle,
     ) {
         // Update uniforms
         var uniforms = MSDFUniforms()
@@ -135,7 +138,7 @@ public final class MSDFTextRenderer {
             atlasTexture: atlasTexture,
             uniformBuffer: ring,
             uniformOffset: offset,
-            overridePipeline: nil
+            overridePipeline: nil,
         )
         styleUniformRingIndex = (styleUniformRingIndex + 1) % styleUniformRingCount
     }
@@ -145,8 +148,10 @@ public final class MSDFTextRenderer {
     /// Computes the unit range in UV space for the provided atlas texture.
     /// This should match the `pxRange` used to bake the atlas.
     public func unitRange(for atlasTexture: MTLTexture) -> SIMD2<Float> {
-        SIMD2<Float>(atlasPxRange / Float(atlasTexture.width),
-                     atlasPxRange / Float(atlasTexture.height))
+        SIMD2<Float>(
+            atlasPxRange / Float(atlasTexture.width),
+            atlasPxRange / Float(atlasTexture.height),
+        )
     }
 
     // Removed the raw-bytes overload to consolidate on the buffer-based API.
@@ -158,7 +163,7 @@ public final class MSDFTextRenderer {
         atlasTexture: MTLTexture,
         uniformBuffer: MTLBuffer,
         uniformOffset: Int = 0,
-        overridePipeline: MTLRenderPipelineState? = nil
+        overridePipeline: MTLRenderPipelineState? = nil,
     ) {
         encoder.setRenderPipelineState(overridePipeline ?? pipelineState)
         encoder.setDepthStencilState(depthState)
@@ -169,11 +174,13 @@ public final class MSDFTextRenderer {
         encoder.setFragmentBuffer(uniformBuffer, offset: uniformOffset, index: _MSDFBufferIndex.uniforms.rawValue)
         encoder.setFragmentTexture(atlasTexture, index: 0)
 
-        encoder.drawIndexedPrimitives(type: .triangle,
-                                      indexCount: mesh.indexCount,
-                                      indexType: .uint32,
-                                      indexBuffer: mesh.indexBuffer,
-                                      indexBufferOffset: 0)
+        encoder.drawIndexedPrimitives(
+            type: .triangle,
+            indexCount: mesh.indexCount,
+            indexType: .uint32,
+            indexBuffer: mesh.indexBuffer,
+            indexBufferOffset: 0,
+        )
     }
 
     // MARK: - Helpers
@@ -201,17 +208,17 @@ public final class MSDFTextRenderer {
         vertexDescriptor: MTLVertexDescriptor,
         customLibrary: MTLLibrary?,
         vertexFunctionName: String,
-        fragmentFunctionName: String
+        fragmentFunctionName: String,
     ) throws -> MTLRenderPipelineState {
-        let library: MTLLibrary
-        if let customLibrary = customLibrary {
-            library = customLibrary
+        let library: MTLLibrary = if let customLibrary {
+            customLibrary
         } else {
-            library = try device.makeDefaultLibrary(bundle: .module)
+            try device.makeDefaultLibrary(bundle: .module)
         }
 
         guard let vfn = library.makeFunction(name: vertexFunctionName),
-              let ffn = library.makeFunction(name: fragmentFunctionName) else {
+              let ffn = library.makeFunction(name: fragmentFunctionName)
+        else {
             throw NSError(domain: "MSDFTextRenderer", code: -3, userInfo: [NSLocalizedDescriptionKey: "Metal shader functions not found: \(vertexFunctionName), \(fragmentFunctionName)"])
         }
 

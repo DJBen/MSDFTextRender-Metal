@@ -63,4 +63,3 @@ public struct MSDFAtlas: Decodable {
         return atlas
     }
 }
-
