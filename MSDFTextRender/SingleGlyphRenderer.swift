@@ -45,11 +45,11 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
         metalKitView.sampleCount = 1
 
         do {
-            msdfRenderer = try MSDFText.MSDFTextRenderer(
+            msdfRenderer = try MSDFTextRenderer(
                 device: device,
                 pixelFormat: metalKitView.colorPixelFormat,
                 sampleCount: metalKitView.sampleCount,
-                atlasPxRange: SIMD2<Float>(repeating: Constants.glyphPxRange)
+                atlasPxRange: Constants.glyphPxRange
             )
         } catch {
             print("Failed to build MSDFText renderer: \(error)")
@@ -101,8 +101,6 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
             self?.inFlightSemaphore.signal()
         }
 
-        msdfRenderer.beginFrame()
-
         guard let renderPassDescriptor = view.currentRenderPassDescriptor,
               let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
             commandBuffer.commit()
@@ -110,13 +108,7 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
         }
 
         renderEncoder.label = "SingleGlyphEncoder"
-        let style = MSDFText.MSDFTextRenderStyle(
-            textColor: textColor,
-            renderMode: 0,
-            strokeColor: SIMD4<Float>(0, 0, 0, 0),
-            strokeWidthPx: 0,
-            strokeFeatherPx: 0
-        )
+        let style = MSDFText.MSDFTextRenderStyle(textColor: textColor)
         msdfRenderer.encode(
             encoder: renderEncoder,
             mesh: mesh,
@@ -249,6 +241,7 @@ private func matrix_translate(tx: Float, ty: Float, tz: Float) -> matrix_float4x
     let column3 = SIMD4<Float>(tx, ty, tz, 1)
     return matrix_float4x4(columns: (column0, column1, column2, column3))
 }
+
 private func matrix_ortho(width: Float, height: Float) -> matrix_float4x4 {
     let sx: Float = width != 0 ? 2.0 / width : 0
     let sy: Float = height != 0 ? -2.0 / height : 0

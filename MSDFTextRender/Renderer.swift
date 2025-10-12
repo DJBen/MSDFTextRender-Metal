@@ -33,13 +33,19 @@ class Renderer: NSObject, MTKViewDelegate {
     let baseFontSize: CGFloat = 36.0
     private let baseFont: CTFont
     private var currentFontSize: CGFloat
-    var atlasPxRange: SIMD2<Float>
     var textColor = SIMD4<Float>(1, 1, 1, 1)
-    // Render style: 0 = normal, 1 = hollow
+    // Render mode managed by the app (0 = fill, 1 = hollow)
     var renderMode: UInt32 = 0
     var strokeColor = SIMD4<Float>(0.0, 0.75, 1.0, 1.0) // Cyan border by default
     var strokeWidthPx: Float = 2.0
     var strokeFeatherPx: Float = 1.0
+
+    // Custom pipeline for hollow rendering
+    private var hollowPipelineState: MTLRenderPipelineState?
+
+    // Uniform ring buffer for hollow rendering (avoid per-frame allocations)
+    private var outlinedUniformBuffers: [MTLBuffer] = []
+    private var outlinedUniformBufferIndex: Int = 0
 
     @MainActor
     init?(metalKitView: MTKView) {
@@ -63,7 +69,6 @@ class Renderer: NSObject, MTKViewDelegate {
         
         do {
             atlasData = try MSDFText.MSDFAtlas.load(from: atlasJSONURL)
-            atlasPxRange = atlasData.pxRange
             atlasTexture = try Renderer.loadTexture(device: device)
         } catch {
             print("Unable to load atlas resources. Error: \(error)")
@@ -71,13 +76,31 @@ class Renderer: NSObject, MTKViewDelegate {
         }
         
         do {
-            msdfRenderer = try MSDFText.MSDFTextRenderer(device: device,
-                                                         pixelFormat: metalKitView.colorPixelFormat,
-                                                         sampleCount: metalKitView.sampleCount,
-                                                         atlasPxRange: atlasPxRange)
+            msdfRenderer = try MSDFTextRenderer(
+                device: device,
+                pixelFormat: metalKitView.colorPixelFormat,
+                sampleCount: metalKitView.sampleCount,
+                atlasPxRange: atlasData.atlas.distanceRange
+            )
         } catch {
             print("Unable to create MSDFTextRenderer. Error: \(error)")
             return nil
+        }
+
+        // Build custom hollow pipeline from app shaders
+        do {
+            hollowPipelineState = try Renderer.buildHollowPipeline(
+                device: device,
+                pixelFormat: metalKitView.colorPixelFormat,
+                sampleCount: metalKitView.sampleCount
+            )
+        } catch {
+            print("Unable to create hollow pipeline. Error: \(error)")
+        }
+
+        // Allocate a small ring of uniform buffers for hollow rendering
+        outlinedUniformBuffers = (0..<maxBuffersInFlight).compactMap { _ in
+            device.makeBuffer(length: MemoryLayout<OutlinedUniforms>.stride, options: .storageModeShared)
         }
         
         guard let ctFont = Renderer.loadFont(at: fontURL, size: baseFontSize) else {
@@ -179,9 +202,7 @@ class Renderer: NSObject, MTKViewDelegate {
         textMeshBuilder?.updateFont(scaledFont)
         currentFontSize = targetSize
     }
-    
-    
-    
+
     func draw(in view: MTKView) {
         _ = inFlightSemaphore.wait(timeout: .distantFuture)
         
@@ -200,8 +221,6 @@ class Renderer: NSObject, MTKViewDelegate {
             self?.inFlightSemaphore.signal()
         }
         
-        msdfRenderer.beginFrame()
-        
         guard let renderPassDescriptor = view.currentRenderPassDescriptor,
               let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
             commandBuffer.commit()
@@ -209,15 +228,37 @@ class Renderer: NSObject, MTKViewDelegate {
         }
         
         renderEncoder.label = "MSDF Text Encoder"
-        let style = MSDFText.MSDFTextRenderStyle(textColor: textColor,
-                                                 renderMode: renderMode,
-                                                 strokeColor: strokeColor,
-                                                 strokeWidthPx: strokeWidthPx,
-                                                 strokeFeatherPx: strokeFeatherPx)
-        msdfRenderer.encode(encoder: renderEncoder,
-                            mesh: textMesh,
-                            atlasTexture: atlasTexture,
-                            style: style)
+        if renderMode == 0 {
+            // Default fill using the package shader/uniforms
+            let style = MSDFText.MSDFTextRenderStyle(textColor: textColor)
+            msdfRenderer.encode(encoder: renderEncoder,
+                                mesh: textMesh,
+                                atlasTexture: atlasTexture,
+                                style: style)
+        } else {
+            // Hollow rendering using custom shader/uniforms supplied by the app
+            var uniforms = OutlinedUniforms()
+            uniforms.projectionMatrix = msdfRenderer.projectionMatrix
+            uniforms.modelViewMatrix = msdfRenderer.modelViewMatrix
+            uniforms.textColor = textColor
+            uniforms.unitRange = msdfRenderer.unitRange(for: atlasTexture)
+            uniforms.strokeColor = strokeColor
+            uniforms.renderOptions = SIMD2<UInt32>(1, 0)
+            uniforms.strokeParams = SIMD2<Float>(strokeWidthPx, strokeFeatherPx)
+
+            if !outlinedUniformBuffers.isEmpty {
+                let ub = outlinedUniformBuffers[outlinedUniformBufferIndex]
+                memcpy(ub.contents(), &uniforms, MemoryLayout<OutlinedUniforms>.stride)
+                msdfRenderer.encode(
+                    encoder: renderEncoder,
+                    mesh: textMesh,
+                    atlasTexture: atlasTexture,
+                    uniformBuffer: ub,
+                    overridePipeline: hollowPipelineState
+                )
+                outlinedUniformBufferIndex = (outlinedUniformBufferIndex + 1) % outlinedUniformBuffers.count
+            }
+        }
         renderEncoder.endEncoding()
         
         if let drawable = view.currentDrawable {
@@ -267,4 +308,33 @@ private func matrix_ortho(width: Float, height: Float) -> matrix_float4x4 {
         SIMD4<Float>(0, 0, 1, 0),
         SIMD4<Float>(-1, 1, 0, 1)
     ))
+}
+
+extension Renderer {
+    static func buildHollowPipeline(
+        device: MTLDevice,
+        pixelFormat: MTLPixelFormat,
+        sampleCount: Int
+    ) throws -> MTLRenderPipelineState {
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.label = "Outlined.MSDF.Pipeline"
+        let library = try device.makeDefaultLibrary(bundle: .main)
+        descriptor.vertexFunction = library.makeFunction(name: "outlinedVertexShader")
+        descriptor.fragmentFunction = library.makeFunction(name: "outlinedFragmentShader")
+        descriptor.vertexDescriptor = MSDFText.MSDFTextRenderer.buildMetalVertexDescriptor()
+        descriptor.rasterSampleCount = sampleCount
+        descriptor.colorAttachments[0].pixelFormat = pixelFormat
+        descriptor.depthAttachmentPixelFormat = .invalid
+        descriptor.stencilAttachmentPixelFormat = .invalid
+        if let attachment = descriptor.colorAttachments[0] {
+            attachment.isBlendingEnabled = true
+            attachment.sourceRGBBlendFactor = .sourceAlpha
+            attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+            attachment.rgbBlendOperation = .add
+            attachment.sourceAlphaBlendFactor = .one
+            attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            attachment.alphaBlendOperation = .add
+        }
+        return try device.makeRenderPipelineState(descriptor: descriptor)
+    }
 }

@@ -47,11 +47,6 @@ public struct MSDFAtlas: Decodable {
         CGSize(width: atlas.width, height: atlas.height)
     }
 
-    /// Distance in texels the MSDF encodes around edges (pxRange in 2D)
-    public var pxRange: SIMD2<Float> {
-        SIMD2<Float>(repeating: atlas.distanceRange)
-    }
-
     public func descriptor(for glyph: CGGlyph) -> GlyphDescriptor? {
         glyphMap[glyph]
     }
