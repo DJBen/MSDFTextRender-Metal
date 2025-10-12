@@ -127,3 +127,69 @@ On the Paragraph tab, a segmented control toggles between two render styles:
 
 - `Normal`: Standard MSDF fill with adaptive smoothing.
 - `Border`: Renders a hard border (outline) around glyphs using the MSDF distance, with a small feather for anti-aliased edges. The default border is cyan with 2 px width. You can tweak color/width in `Renderer.swift` via `strokeColor`, `strokeWidthPx`, and `strokeFeatherPx`.
+
+## Swift Package: MSDFText
+
+Atlas decoding, glyph typesetting, and rendering have been extracted into a reusable Swift Package `MSDFText` in `Sources/MSDFText` with a simple API. The package expects you to supply the atlas `MTLTexture` (PNG or other) so you can manage asset loading however you prefer.
+
+Key types:
+- `MSDFAtlas`: Decodes the JSON metadata for the MSDF atlas and provides glyph descriptors and metrics.
+- `MSDFTextMeshBuilder`: Lays out text (CoreText) and builds a vertex/index mesh referencing the atlas UVs.
+- `MSDFTextRenderer`: Owns the Metal pipeline and uniform buffers and encodes draw calls for a mesh and a provided `MTLTexture`.
+
+### Add the package
+
+Add the local package (this repo) in Xcode via Swift Package Manager. The library product is named `MSDFText`.
+
+### Usage
+
+```
+import MetalKit
+import CoreText
+import MSDFText
+
+// 1) Load atlas metadata and texture (you provide the texture)
+let atlasURL = Bundle.main.url(forResource: "SF-Pro-Display_mtsdf", withExtension: "json")!
+var atlas = try MSDFAtlas.load(from: atlasURL)
+
+let loader = MTKTextureLoader(device: device)
+let texURL = Bundle.main.url(forResource: "SF-Pro-Display_mtsdf", withExtension: "png")!
+let atlasTexture = try loader.newTexture(URL: texURL, options: [
+    .SRGB: false,
+    .origin: MTKTextureLoader.Origin.topLeft,
+    .generateMipmaps: false,
+])
+
+// 2) Build text mesh for your string
+let ctFont: CTFont = /* create from your font */
+let meshBuilder = MSDFTextMeshBuilder(device: device, atlas: atlas, font: ctFont)
+let mesh = meshBuilder.buildMesh(for: "Hello MSDF!", in: view.bounds.size, margin: 16, scale: view.contentScaleFactor)!
+
+// 3) Create renderer and encode draw
+let renderer = try MSDFTextRenderer(device: device,
+                                    pixelFormat: mtkView.colorPixelFormat,
+                                    sampleCount: mtkView.sampleCount,
+                                    atlasPxRange: atlas.pxRange)
+renderer.setOrthoProjection(width: Float(mtkView.drawableSize.width),
+                            height: Float(mtkView.drawableSize.height))
+renderer.beginFrame()
+
+let style = MSDFTextRenderStyle(textColor: SIMD4<Float>(1,1,1,1),
+                                renderMode: 0, // 0=fill, 1=hollow
+                                strokeColor: SIMD4<Float>(0,0.75,1,1),
+                                strokeWidthPx: 2,
+                                strokeFeatherPx: 1)
+renderer.encode(encoder: renderEncoder,
+                mesh: mesh,
+                atlasTexture: atlasTexture,
+                style: style)
+```
+
+Notes:
+- You must provide the atlas `MTLTexture`. The renderer computes the MSDF unit range from `atlas.pxRange` and the texture size.
+- The package includes the Metal shaders. No `ShaderTypes.h` is required; Swift-side uniforms mirror the shader layout.
+
+What moved where:
+- Atlas JSON decoding → `Sources/MSDFText/MSDFAtlas.swift`
+- Mesh building/typesetting → `Sources/MSDFText/MSDFTextMesh.swift`
+- Renderer + pipeline/shaders → `Sources/MSDFText/MSDFTextRenderer.swift`, `Sources/MSDFText/Shaders.metal`

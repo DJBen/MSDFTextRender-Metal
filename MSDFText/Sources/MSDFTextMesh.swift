@@ -3,34 +3,46 @@ import Metal
 import simd
 import UIKit
 
-struct MSDFGlyphVertex {
-    var position: SIMD3<Float>
-    var texCoord: SIMD2<Float>
+public struct MSDFGlyphVertex {
+    public var position: SIMD3<Float>
+    public var texCoord: SIMD2<Float>
+
+    public init(position: SIMD3<Float>, texCoord: SIMD2<Float>) {
+        self.position = position
+        self.texCoord = texCoord
+    }
 }
 
-struct MSDFTextMesh {
-    let vertexBuffer: MTLBuffer
-    let indexBuffer: MTLBuffer
-    let indexCount: Int
-    let bounds: CGSize
+public struct MSDFTextMesh {
+    public let vertexBuffer: MTLBuffer
+    public let indexBuffer: MTLBuffer
+    public let indexCount: Int
+    public let bounds: CGSize
+
+    public init(vertexBuffer: MTLBuffer, indexBuffer: MTLBuffer, indexCount: Int, bounds: CGSize) {
+        self.vertexBuffer = vertexBuffer
+        self.indexBuffer = indexBuffer
+        self.indexCount = indexCount
+        self.bounds = bounds
+    }
 }
 
-final class MSDFTextMeshBuilder {
+public final class MSDFTextMeshBuilder {
     private let device: MTLDevice
     private let atlas: MSDFAtlas
     private var font: CTFont
 
-    init(device: MTLDevice, atlas: MSDFAtlas, font: CTFont) {
+    public init(device: MTLDevice, atlas: MSDFAtlas, font: CTFont) {
         self.device = device
         self.atlas = atlas
         self.font = font
     }
     
-    func updateFont(_ font: CTFont) {
+    public func updateFont(_ font: CTFont) {
         self.font = font
     }
 
-    func buildMesh(
+    public func buildMesh(
         for text: String,
         in frameSize: CGSize,
         margin: CGFloat,
@@ -235,3 +247,4 @@ final class MSDFTextMeshBuilder {
                                            height: finalHeight))
     }
 }
+

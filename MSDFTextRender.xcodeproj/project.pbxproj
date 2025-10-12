@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		FC950C502E9C1714004099E8 /* MSDFText in Frameworks */ = {isa = PBXBuildFile; productRef = FC950C4F2E9C1714004099E8 /* MSDFText */; };
+		FC950C722E9C18FA004099E8 /* MSDFText in Frameworks */ = {isa = PBXBuildFile; productRef = FC950C712E9C18FA004099E8 /* MSDFText */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		FC21B38F2E976FBD0057BF1E /* MSDFTextRender.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MSDFTextRender.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -27,6 +32,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC950C502E9C1714004099E8 /* MSDFText in Frameworks */,
+				FC950C722E9C18FA004099E8 /* MSDFText in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -69,6 +76,8 @@
 			);
 			name = MSDFTextRender;
 			packageProductDependencies = (
+				FC950C4F2E9C1714004099E8 /* MSDFText */,
+				FC950C712E9C18FA004099E8 /* MSDFText */,
 			);
 			productName = MSDFTextRender;
 			productReference = FC21B38F2E976FBD0057BF1E /* MSDFTextRender.app */;
@@ -98,6 +107,9 @@
 			);
 			mainGroup = FC21B3862E976FBD0057BF1E;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				FC950C702E9C18FA004099E8 /* XCLocalSwiftPackageReference "MSDFText" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = FC21B3902E976FBD0057BF1E /* Products */;
 			projectDirPath = "";
@@ -279,7 +291,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "$(TARGET_NAME)/ShaderTypes.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -315,7 +327,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "$(TARGET_NAME)/ShaderTypes.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -344,6 +356,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		FC950C702E9C18FA004099E8 /* XCLocalSwiftPackageReference "MSDFText" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = MSDFText;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FC950C4F2E9C1714004099E8 /* MSDFText */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MSDFText;
+		};
+		FC950C712E9C18FA004099E8 /* MSDFText */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MSDFText;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = FC21B3872E976FBD0057BF1E /* Project object */;
 }
