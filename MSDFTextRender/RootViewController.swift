@@ -1,14 +1,12 @@
 import UIKit
 import MetalKit
 
-// Our iOS specific view controller
-class GameViewController: UIViewController {
+class RootViewController: UIViewController {
 
     var renderer: Renderer!
     var mtkView: MTKView!
     private var modeControl: UISegmentedControl?
     
-    private let navigationTitle = "Render MSDF in Metal"
     private var zoomScale: CGFloat = 1.0
     private let minZoomScale: CGFloat = 0.5
     private let maxZoomScale: CGFloat = 3.0
@@ -22,7 +20,7 @@ class GameViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        navigationItem.title = navigationTitle
+        navigationItem.title = "Render Text in Metal"
         configureNavigationBar()
         configureModeSegmentControl()
 
