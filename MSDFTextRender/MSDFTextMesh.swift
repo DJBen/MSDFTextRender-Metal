@@ -30,10 +30,12 @@ final class MSDFTextMeshBuilder {
         self.font = font
     }
 
-    func buildMesh(for text: String,
-                   in frameSize: CGSize,
-                   margin: CGFloat,
-                   scale: CGFloat) -> MSDFTextMesh? {
+    func buildMesh(
+        for text: String,
+        in frameSize: CGSize,
+        margin: CGFloat,
+        scale: CGFloat
+    ) -> MSDFTextMesh? {
         guard frameSize.width > 0, frameSize.height > 0 else { return nil }
         let scaleValue = max(scale, 0.0001)
         let layoutWidth = max(frameSize.width - margin * 2.0, 1.0)

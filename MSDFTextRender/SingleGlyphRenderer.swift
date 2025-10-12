@@ -212,16 +212,20 @@ final class SingleGlyphRenderer: NSObject, MTKViewDelegate {
     private static func loadTexture(device: MTLDevice) throws -> MTLTexture {
         let loader = MTKTextureLoader(device: device)
         let options: [MTKTextureLoader.Option: Any] = [
-            .origin: MTKTextureLoader.Origin.bottomLeft,
+            .origin: MTKTextureLoader.Origin.topLeft,
             .SRGB: false,
             .generateMipmaps: false,
             .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue),
             .textureStorageMode: NSNumber(value: MTLStorageMode.private.rawValue),
         ]
-        return try loader.newTexture(name: "r",
-                                     scaleFactor: 1.0,
-                                     bundle: .main,
-                                     options: options)
+        guard let url = Bundle.main.url(forResource: "r", withExtension: "png") else {
+            throw NSError(domain: "SingleGlyphRenderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No r.png from bundle"])
+        }
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            throw NSError(domain: "SingleGlyphRenderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load r.png from bundle"])
+        }
+        return try loader.newTexture(cgImage: cgImage, options: options)
     }
 
     private static func makeGlyphGeometry(device: MTLDevice,

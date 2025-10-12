@@ -13,6 +13,10 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		FC21B3912E976FBD0057BF1E /* MSDFTextRender */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+				"Resources/SF-Pro-Display_mtsdf.png" = compiled;
+				Resources/r.png = compiled;
+			};
 			path = MSDFTextRender;
 			sourceTree = "<group>";
 		};

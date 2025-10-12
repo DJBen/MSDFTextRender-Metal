@@ -182,14 +182,18 @@ class Renderer: NSObject, MTKViewDelegate {
         let options: [MTKTextureLoader.Option: Any] = [
             .SRGB: false,
             .generateMipmaps: false,
-            .origin: MTKTextureLoader.Origin.bottomLeft,
+            .origin: MTKTextureLoader.Origin.topLeft,
             .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue),
             .textureStorageMode: NSNumber(value: MTLStorageMode.private.rawValue),
         ]
-        return try textureLoader.newTexture(name: "SF-Pro-Display_mtsdf",
-                                            scaleFactor: 1.0,
-                                            bundle: .main,
-                                            options: options)
+        guard let url = Bundle.main.url(forResource: "SF-Pro-Display_mtsdf", withExtension: "png") else {
+            throw NSError(domain: "Renderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No SF-Pro-Display_mtsdf.png from bundle"])
+        }
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            throw NSError(domain: "Renderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load SF-Pro-Display_mtsdf.png from bundle"])
+        }
+        return try textureLoader.newTexture(cgImage: cgImage, options: options)
     }
     
     private static func loadFont(at url: URL, size: CGFloat) -> CTFont? {
