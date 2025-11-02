@@ -53,7 +53,7 @@ fragment float4 msdfFragmentShader(Varyings in               [[stage_in]],
     constexpr sampler colorSampler(address::clamp_to_edge, filter::bicubic);
 
     float3 sample = atlas.sample(colorSampler, in.texCoord).rgb;
-    float msdf = max(min(sample.r, sample.g), min(max(sample.r, sample.g), sample.b));
+    float msdf = median3(sample.r, sample.g, sample.b);
     float2 screenTexSize = 1.0f / fwidth(in.texCoord);
     float screenPxRange = max(0.5f * dot(uni.unitRange, screenTexSize), 1.0f);
     float screenPxDistance = screenPxRange * (msdf - 0.5f);
