@@ -101,7 +101,7 @@ fragment float4 fragmentShader(ColorInOut in [[stage_in]],
                                    filter::bicubic);
 
     float3 sample = colorMap.sample(colorSampler, in.texCoord).rgb;
-    float msdf = max(min(sample.r, sample.g), min(max(sample.r, sample.g), sample.b));
+    float msdf = median3(sample.r, sample.g, sample.b);
     float2 screenTexSize = 1.0f / fwidth(in.texCoord);
     float screenPxRange = max(0.5f * dot(uniforms.unitRange, screenTexSize), 1.0f);
     float screenPxDistance = screenPxRange * (msdf - 0.5f);
@@ -126,4 +126,99 @@ With this workflow you can regenerate glyph coverage, rebuild the MSDF atlas, dr
 On the Paragraph tab, a segmented control toggles between two render styles:
 
 - `Normal`: Standard MSDF fill with adaptive smoothing.
-- `Border`: Renders a hard border (outline) around glyphs using the MSDF distance, with a small feather for anti-aliased edges. The default border is cyan with 2 px width. You can tweak color/width in `Renderer.swift` via `strokeColor`, `strokeWidthPx`, and `strokeFeatherPx`.
+
+
+## Swift Package: MSDFText
+
+Atlas decoding, glyph typesetting, and rendering have been extracted into a reusable Swift Package `MSDFText` in `Sources/MSDFText` with a simple API. The package expects you to supply the atlas `MTLTexture` (PNG or other) so you can manage asset loading however you prefer.
+
+Key types:
+- `MSDFAtlas`: Decodes the JSON metadata for the MSDF atlas and provides glyph descriptors and metrics.
+- `MSDFTextMeshBuilder`: Lays out text (CoreText) and builds a vertex/index mesh referencing the atlas UVs.
+- `MSDFTextRenderer`: Owns the Metal pipeline and uniform buffers and encodes draw calls for a mesh and a provided `MTLTexture`.
+
+### Add the package
+
+Add the local package (this repo) in Xcode via Swift Package Manager. The library product is named `MSDFText`.
+
+### Usage
+
+```
+import MetalKit
+import CoreText
+import MSDFText
+
+// 1) Load atlas metadata and texture (you provide the texture)
+let atlasURL = Bundle.main.url(forResource: "SF-Pro-Display_mtsdf", withExtension: "json")!
+var atlas = try MSDFAtlas.load(from: atlasURL)
+
+let loader = MTKTextureLoader(device: device)
+let texURL = Bundle.main.url(forResource: "SF-Pro-Display_mtsdf", withExtension: "png")!
+let atlasTexture = try loader.newTexture(URL: texURL, options: [
+    .SRGB: false,
+    .origin: MTKTextureLoader.Origin.topLeft,
+    .generateMipmaps: false,
+])
+
+// 2) Build text mesh for your string
+let ctFont: CTFont = /* create from your font */
+let meshBuilder = MSDFTextMeshBuilder(device: device, atlas: atlas, font: ctFont)
+let mesh = meshBuilder.buildMesh(for: "Hello MSDF!", in: view.bounds.size, margin: 16, scale: view.contentScaleFactor)!
+
+// 3) Create renderer and encode draw
+let renderer = try MSDFTextRenderer(device: device,
+                                    pixelFormat: mtkView.colorPixelFormat,
+                                    sampleCount: mtkView.sampleCount,
+                                    atlasPxRange: atlas.atlas.distanceRange)
+renderer.setOrthoProjection(width: Float(mtkView.drawableSize.width),
+                            height: Float(mtkView.drawableSize.height))
+
+let style = MSDFTextRenderStyle(textColor: SIMD4<Float>(1,1,1,1))
+renderer.encode(encoder: renderEncoder,
+                mesh: mesh,
+                atlasTexture: atlasTexture,
+                style: style)
+```
+
+Notes:
+- You must provide the atlas `MTLTexture`. The renderer computes the MSDF unit range from `atlas.pxRange` and the texture size.
+- The package includes the default Metal shaders (fill only). No `ShaderTypes.h` is required; Swift-side uniforms mirror the shader layout.
+
+### Custom Shaders and Uniforms (Optional)
+
+You can supply your own Metal shader functions and uniform layouts. If you don’t, the package uses its default fill shader and uniform.
+
+- Provide a custom library and function names when constructing the renderer, or build your own pipeline and pass uniforms directly at draw time.
+
+Example: provide your own uniforms and pipeline per draw
+
+```
+// Build pipeline elsewhere; bind uniforms at buffer index 2
+var myUniforms = MyUniforms(
+    projectionMatrix: renderer.projectionMatrix,
+    modelViewMatrix: renderer.modelViewMatrix,
+    unitRange: renderer.unitRange(for: atlasTexture)
+)
+
+withUnsafeBytes(of: &myUniforms) { raw in
+    if let uniformBuffer = device.makeBuffer(bytes: raw.baseAddress!,
+                                             length: raw.count,
+                                             options: .storageModeShared) {
+        renderer.encode(encoder: renderEncoder,
+                        mesh: mesh,
+                        atlasTexture: atlasTexture,
+                        uniformBuffer: uniformBuffer,
+                        overridePipeline: myPipeline)
+    }
+}
+```
+
+Contract for custom shaders:
+- Vertex and fragment expect uniforms at buffer index `2` and the atlas at texture index `0`.
+- You can freely define your own uniform struct; the package will not impose any layout when using the custom uniform buffer overload.
+- If using `uniformOffset`, ensure it is 256-byte aligned (Metal requires constant buffer offsets to be a multiple of 256 bytes).
+
+What moved where:
+- Atlas JSON decoding → `Sources/MSDFText/MSDFAtlas.swift`
+- Mesh building/typesetting → `Sources/MSDFText/MSDFTextMesh.swift`
+- Renderer + pipeline/shaders → `Sources/MSDFText/MSDFTextRenderer.swift`, `Sources/MSDFText/Shaders.metal`

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run SwiftFormat on staged Swift files before commit, using system swiftformat (Homebrew).
+
+ROOT_DIR=$(git rev-parse --show-toplevel)
+cd "$ROOT_DIR"
+
+if ! command -v swiftformat >/dev/null 2>&1; then
+  echo "swiftformat not found in PATH. Install it with: brew install swiftformat" >&2
+  exit 1
+fi
+
+# Get staged Swift files (added, copied, modified)
+STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.swift$' || true)
+
+if [ -z "${STAGED}" ]; then
+  exit 0
+fi
+
+echo "SwiftFormat: formatting staged Swift files..."
+echo "$STAGED" | while IFS= read -r file; do
+  if [ -f "$file" ]; then
+    swiftformat --config .swiftformat "$file" >/dev/null || {
+      echo "SwiftFormat failed for $file" >&2
+      exit 1
+    }
+    git add "$file"
+  fi
+done
+
+exit 0

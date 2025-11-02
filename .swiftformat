@@ -1,0 +1,6 @@
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--swiftversion 6.1
+--indent 4
+--linebreaks lf

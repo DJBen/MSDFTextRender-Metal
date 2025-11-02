@@ -1,8 +1,7 @@
-import UIKit
 import MetalKit
+import UIKit
 
 final class SingleGlyphViewController: UIViewController {
-
     private var renderer: SingleGlyphRenderer?
     private var mtkView: MTKView?
     private var zoomScale: CGFloat = 1.0
@@ -55,7 +54,7 @@ final class SingleGlyphViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard let mtkView = mtkView else { return }
+        guard let mtkView else { return }
         renderer?.mtkView(mtkView, drawableSizeWillChange: mtkView.drawableSize)
     }
 

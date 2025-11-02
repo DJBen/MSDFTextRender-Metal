@@ -5,178 +5,123 @@
 //  Created by Sihao Lu on 10/8/25.
 //
 
+import CoreText
 import Metal
 import MetalKit
+import MSDFText
 import simd
-import CoreText
 
-let alignedUniformsSize = (MemoryLayout<Uniforms>.size + 0xFF) & -0x100
 let maxBuffersInFlight = 3
 
 class Renderer: NSObject, MTKViewDelegate {
-    
     let device: MTLDevice
     let commandQueue: MTLCommandQueue
-    var dynamicUniformBuffer: MTLBuffer
-    var pipelineState: MTLRenderPipelineState
-    var depthState: MTLDepthStencilState
     var atlasTexture: MTLTexture
-    var atlasData: MSDFAtlas
+    var atlasData: MSDFText.MSDFAtlas
     let textContent: String
     weak var view: MTKView?
-    var textMeshBuilder: MSDFTextMeshBuilder?
-    var textMesh: MSDFTextMesh?
-    
+    var textMeshBuilder: MSDFText.MSDFTextMeshBuilder?
+    var textMesh: MSDFText.MSDFTextMesh?
+    var msdfRenderer: MSDFText.MSDFTextRenderer
+
     let inFlightSemaphore = DispatchSemaphore(value: maxBuffersInFlight)
-    
-    var uniformBufferOffset = 0
-    var uniformBufferIndex = 0
-    var uniforms: UnsafeMutablePointer<Uniforms>
-    
-    var projectionMatrix: matrix_float4x4 = matrix_identity_float4x4
+
     var zoomScale: CGFloat = 1.0
-    
+
     let margin: CGFloat = 16.0
     let baseFontSize: CGFloat = 36.0
     private let baseFont: CTFont
     private var currentFontSize: CGFloat
-    var atlasPxRange: SIMD2<Float>
-    var atlasUnitRange = SIMD2<Float>(repeating: 0)
     var textColor = SIMD4<Float>(1, 1, 1, 1)
-    // Render style: 0 = normal, 1 = hollow
+    // Render mode managed by the app (0 = fill, 1 = hollow)
     var renderMode: UInt32 = 0
     var strokeColor = SIMD4<Float>(0.0, 0.75, 1.0, 1.0) // Cyan border by default
     var strokeWidthPx: Float = 2.0
     var strokeFeatherPx: Float = 1.0
 
+    // Custom pipeline for hollow rendering
+    private var hollowPipelineState: MTLRenderPipelineState?
+
+    // Uniform ring buffer for hollow rendering (avoid per-frame allocations)
+    private var outlinedUniformBuffers: [MTLBuffer] = []
+    private var outlinedUniformBufferIndex: Int = 0
+
     @MainActor
     init?(metalKitView: MTKView) {
         guard let device = metalKitView.device,
-              let queue = device.makeCommandQueue() else {
+              let queue = device.makeCommandQueue()
+        else {
             return nil
         }
-        
+
         self.device = device
-        self.commandQueue = queue
-        
-        let uniformBufferSize = alignedUniformsSize * maxBuffersInFlight
-        guard let buffer = device.makeBuffer(length: uniformBufferSize,
-                                             options: [.storageModeShared]) else {
-            return nil
-        }
-        dynamicUniformBuffer = buffer
-        dynamicUniformBuffer.label = "UniformBuffer"
-        uniforms = UnsafeMutableRawPointer(dynamicUniformBuffer.contents())
-            .bindMemory(to: Uniforms.self, capacity: 1)
-        
+        commandQueue = queue
+
         metalKitView.depthStencilPixelFormat = .invalid
         metalKitView.colorPixelFormat = .bgra8Unorm_srgb
         metalKitView.sampleCount = 1
-        
-        let vertexDescriptor = Renderer.buildMetalVertexDescriptor()
-        
-        do {
-            pipelineState = try Renderer.buildRenderPipelineWithDevice(device: device,
-                                                                       metalKitView: metalKitView,
-                                                                       mtlVertexDescriptor: vertexDescriptor)
-        } catch {
-            print("Unable to compile render pipeline state. Error: \(error)")
-            return nil
-        }
-        
-        let depthDescriptor = MTLDepthStencilDescriptor()
-        depthDescriptor.depthCompareFunction = .always
-        depthDescriptor.isDepthWriteEnabled = false
-        guard let depthState = device.makeDepthStencilState(descriptor: depthDescriptor) else {
-            return nil
-        }
-        self.depthState = depthState
-        
+
         guard let atlasJSONURL = Bundle.main.url(forResource: "SF-Pro-Display_mtsdf", withExtension: "json"),
-              let fontURL = Bundle.main.url(forResource: "SF-Pro-Display-Regular", withExtension: "otf") else {
+              let fontURL = Bundle.main.url(forResource: "SF-Pro-Display-Regular", withExtension: "otf")
+        else {
             print("Missing MSDF resources in bundle.")
             return nil
         }
-        
+
         do {
-            atlasData = try MSDFAtlas.load(from: atlasJSONURL)
-            atlasPxRange = atlasData.pxRange
+            atlasData = try MSDFText.MSDFAtlas.load(from: atlasJSONURL)
             atlasTexture = try Renderer.loadTexture(device: device)
-            atlasUnitRange = atlasPxRange / SIMD2<Float>(Float(atlasTexture.width), Float(atlasTexture.height))
         } catch {
             print("Unable to load atlas resources. Error: \(error)")
             return nil
         }
-        
+
+        do {
+            msdfRenderer = try MSDFTextRenderer(
+                device: device,
+                pixelFormat: metalKitView.colorPixelFormat,
+                sampleCount: metalKitView.sampleCount,
+                atlasPxRange: atlasData.atlas.distanceRange,
+            )
+        } catch {
+            print("Unable to create MSDFTextRenderer. Error: \(error)")
+            return nil
+        }
+
+        // Build custom hollow pipeline from app shaders
+        do {
+            hollowPipelineState = try Renderer.buildHollowPipeline(
+                device: device,
+                pixelFormat: metalKitView.colorPixelFormat,
+                sampleCount: metalKitView.sampleCount,
+            )
+        } catch {
+            print("Unable to create hollow pipeline. Error: \(error)")
+        }
+
+        // Allocate a small ring of uniform buffers for hollow rendering
+        outlinedUniformBuffers = (0 ..< maxBuffersInFlight).compactMap { _ in
+            device.makeBuffer(length: MemoryLayout<OutlinedUniforms>.stride, options: .storageModeShared)
+        }
+
         guard let ctFont = Renderer.loadFont(at: fontURL, size: baseFontSize) else {
             print("Unable to load SF Pro Display font.")
             return nil
         }
-        
+
         baseFont = ctFont
         currentFontSize = baseFontSize
-        textMeshBuilder = MSDFTextMeshBuilder(device: device, atlas: atlasData, font: ctFont)
-        
+        textMeshBuilder = MSDFText.MSDFTextMeshBuilder(device: device, atlas: atlasData, font: ctFont)
+
         textContent = Renderer.composeParagraphText()
         super.init()
-        
+
         view = metalKitView
-        
+
         rebuildTextMesh(for: metalKitView)
         updateProjection(for: metalKitView.drawableSize)
     }
-    
-    class func buildMetalVertexDescriptor() -> MTLVertexDescriptor {
-        let descriptor = MTLVertexDescriptor()
-        let stride = MemoryLayout<MSDFGlyphVertex>.stride
-        
-        descriptor.attributes[VertexAttribute.position.rawValue].format = .float3
-        descriptor.attributes[VertexAttribute.position.rawValue].offset = 0
-        descriptor.attributes[VertexAttribute.position.rawValue].bufferIndex = BufferIndex.meshPositions.rawValue
-        
-        descriptor.attributes[VertexAttribute.texcoord.rawValue].format = .float2
-        descriptor.attributes[VertexAttribute.texcoord.rawValue].offset = MemoryLayout<SIMD3<Float>>.stride
-        descriptor.attributes[VertexAttribute.texcoord.rawValue].bufferIndex = BufferIndex.meshPositions.rawValue
-        
-        descriptor.layouts[BufferIndex.meshPositions.rawValue].stride = stride
-        descriptor.layouts[BufferIndex.meshPositions.rawValue].stepRate = 1
-        descriptor.layouts[BufferIndex.meshPositions.rawValue].stepFunction = .perVertex
-        
-        return descriptor
-    }
-    
-    @MainActor
-    class func buildRenderPipelineWithDevice(device: MTLDevice,
-                                             metalKitView: MTKView,
-                                             mtlVertexDescriptor: MTLVertexDescriptor) throws -> MTLRenderPipelineState {
-        let library = device.makeDefaultLibrary()
-        let vertexFunction = library?.makeFunction(name: "vertexShader")
-        let fragmentFunction = library?.makeFunction(name: "fragmentShader")
-        
-        let pipelineDescriptor = MTLRenderPipelineDescriptor()
-        pipelineDescriptor.label = "MSDFTextPipeline"
-        pipelineDescriptor.rasterSampleCount = metalKitView.sampleCount
-        pipelineDescriptor.vertexFunction = vertexFunction
-        pipelineDescriptor.fragmentFunction = fragmentFunction
-        pipelineDescriptor.vertexDescriptor = mtlVertexDescriptor
-        
-        pipelineDescriptor.colorAttachments[0].pixelFormat = metalKitView.colorPixelFormat
-        pipelineDescriptor.depthAttachmentPixelFormat = metalKitView.depthStencilPixelFormat
-        pipelineDescriptor.stencilAttachmentPixelFormat = metalKitView.depthStencilPixelFormat
-        
-        if let attachment = pipelineDescriptor.colorAttachments[0] {
-            attachment.isBlendingEnabled = true
-            attachment.sourceRGBBlendFactor = .sourceAlpha
-            attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-            attachment.rgbBlendOperation = .add
-            attachment.sourceAlphaBlendFactor = .one
-            attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-            attachment.alphaBlendOperation = .add
-        }
-        
-        return try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
-    }
-    
+
     class func loadTexture(device: MTLDevice) throws -> MTLTexture {
         let textureLoader = MTKTextureLoader(device: device)
         let options: [MTKTextureLoader.Option: Any] = [
@@ -190,18 +135,20 @@ class Renderer: NSObject, MTKViewDelegate {
             throw NSError(domain: "Renderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "No SF-Pro-Display_mtsdf.png from bundle"])
         }
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil)
+        else {
             throw NSError(domain: "Renderer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load SF-Pro-Display_mtsdf.png from bundle"])
         }
         return try textureLoader.newTexture(cgImage: cgImage, options: options)
     }
-    
+
     private static func loadFont(at url: URL, size: CGFloat) -> CTFont? {
         guard let dataProvider = CGDataProvider(url: url as CFURL),
-              let cgFont = CGFont(dataProvider) else {
+              let cgFont = CGFont(dataProvider)
+        else {
             return nil
         }
-        
+
         // Use the new API for iOS 18+ and fall back to the deprecated one for older versions
         if #available(iOS 18.0, *) {
             var error: Unmanaged<CFError>?
@@ -209,7 +156,8 @@ class Renderer: NSObject, MTKViewDelegate {
                 if let cfError = error?.takeRetainedValue() {
                     let codeValue = CFErrorGetCode(cfError)
                     if let ctError = CTFontManagerError(rawValue: codeValue),
-                       ctError == .alreadyRegistered {
+                       ctError == .alreadyRegistered
+                    {
                         // Font already registered; safe to ignore.
                     } else {
                         print("Font registration error: \(cfError)")
@@ -222,7 +170,8 @@ class Renderer: NSObject, MTKViewDelegate {
                 if let cfError = error?.takeRetainedValue() {
                     let codeValue = CFErrorGetCode(cfError)
                     if let ctError = CTFontManagerError(rawValue: codeValue),
-                       ctError == .alreadyRegistered {
+                       ctError == .alreadyRegistered
+                    {
                         // Font already registered; safe to ignore.
                     } else {
                         print("Font registration error: \(cfError)")
@@ -232,25 +181,29 @@ class Renderer: NSObject, MTKViewDelegate {
         }
         return CTFontCreateWithGraphicsFont(cgFont, size, nil, nil)
     }
-    
+
     private func rebuildTextMesh(for view: MTKView) {
         guard let builder = textMeshBuilder else { return }
         updateFontForCurrentZoom()
         let viewScale = max(CGFloat(view.contentScaleFactor), 0.0001)
         let layoutWidth = max(view.bounds.width, 1.0)
         let layoutHeight = max(view.bounds.height, 1.0)
-        textMesh = builder.buildMesh(for: textContent,
-                                     in: CGSize(width: layoutWidth, height: layoutHeight),
-                                     margin: margin,
-                                     scale: viewScale)
+        textMesh = builder.buildMesh(
+            for: textContent,
+            in: CGSize(width: layoutWidth, height: layoutHeight),
+            margin: margin,
+            scale: viewScale,
+        )
     }
-    
+
     private func updateProjection(for drawableSize: CGSize) {
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
-        projectionMatrix = matrix_ortho(width: Float(drawableSize.width),
-                                        height: Float(drawableSize.height))
+        msdfRenderer.setOrthoProjection(
+            width: Float(drawableSize.width),
+            height: Float(drawableSize.height),
+        )
     }
-    
+
     private func updateFontForCurrentZoom() {
         let targetSize = max(baseFontSize * zoomScale, 0.0001)
         guard abs(targetSize - currentFontSize) > 0.0001 else { return }
@@ -258,91 +211,85 @@ class Renderer: NSObject, MTKViewDelegate {
         textMeshBuilder?.updateFont(scaledFont)
         currentFontSize = targetSize
     }
-    
-    private func updateDynamicBufferState() {
-        uniformBufferIndex = (uniformBufferIndex + 1) % maxBuffersInFlight
-        uniformBufferOffset = alignedUniformsSize * uniformBufferIndex
-        uniforms = UnsafeMutableRawPointer(dynamicUniformBuffer.contents() + uniformBufferOffset)
-            .bindMemory(to: Uniforms.self, capacity: 1)
-    }
-    
-    private func updateUniforms() {
-        uniforms[0].projectionMatrix = projectionMatrix
-        uniforms[0].modelViewMatrix = matrix_identity_float4x4
-        uniforms[0].textColor = textColor
-        uniforms[0].unitRange = atlasUnitRange
-        uniforms[0].strokeColor = strokeColor
-        uniforms[0].renderOptions = SIMD2<UInt32>(renderMode, 0)
-        uniforms[0].strokeParams = SIMD2<Float>(strokeWidthPx, strokeFeatherPx)
-    }
-    
+
     func draw(in view: MTKView) {
         _ = inFlightSemaphore.wait(timeout: .distantFuture)
-        
-        guard let textMesh = textMesh else {
+
+        guard let textMesh else {
             inFlightSemaphore.signal()
             return
         }
-        
+
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             inFlightSemaphore.signal()
             return
         }
-        
+
         commandBuffer.label = "TextCommandBuffer"
         commandBuffer.addCompletedHandler { [weak self] _ in
             self?.inFlightSemaphore.signal()
         }
-        
-        updateDynamicBufferState()
-        updateUniforms()
-        
+
         guard let renderPassDescriptor = view.currentRenderPassDescriptor,
-              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)
+        else {
             commandBuffer.commit()
             return
         }
-        
+
         renderEncoder.label = "MSDF Text Encoder"
-        renderEncoder.setCullMode(.none)
-        renderEncoder.setRenderPipelineState(pipelineState)
-        renderEncoder.setDepthStencilState(depthState)
-        
-        renderEncoder.setVertexBuffer(textMesh.vertexBuffer,
-                                      offset: 0,
-                                      index: BufferIndex.meshPositions.rawValue)
-        renderEncoder.setVertexBuffer(dynamicUniformBuffer,
-                                      offset: uniformBufferOffset,
-                                      index: BufferIndex.uniforms.rawValue)
-        renderEncoder.setFragmentBuffer(dynamicUniformBuffer,
-                                        offset: uniformBufferOffset,
-                                        index: BufferIndex.uniforms.rawValue)
-        renderEncoder.setFragmentTexture(atlasTexture, index: TextureIndex.color.rawValue)
-        
-        renderEncoder.drawIndexedPrimitives(type: .triangle,
-                                            indexCount: textMesh.indexCount,
-                                            indexType: .uint32,
-                                            indexBuffer: textMesh.indexBuffer,
-                                            indexBufferOffset: 0)
+        if renderMode == 0 {
+            // Default fill using the package shader/uniforms
+            let style = MSDFText.MSDFTextRenderStyle(textColor: textColor)
+            msdfRenderer.encode(
+                encoder: renderEncoder,
+                mesh: textMesh,
+                atlasTexture: atlasTexture,
+                style: style,
+            )
+        } else {
+            // Hollow rendering using custom shader/uniforms supplied by the app
+            var uniforms = OutlinedUniforms()
+            uniforms.projectionMatrix = msdfRenderer.projectionMatrix
+            uniforms.modelViewMatrix = msdfRenderer.modelViewMatrix
+            uniforms.textColor = textColor
+            uniforms.unitRange = msdfRenderer.unitRange(for: atlasTexture)
+            uniforms.strokeColor = strokeColor
+            uniforms.renderOptions = SIMD2<UInt32>(1, 0)
+            uniforms.strokeParams = SIMD2<Float>(strokeWidthPx, strokeFeatherPx)
+
+            if !outlinedUniformBuffers.isEmpty {
+                let ub = outlinedUniformBuffers[outlinedUniformBufferIndex]
+                memcpy(ub.contents(), &uniforms, MemoryLayout<OutlinedUniforms>.stride)
+                msdfRenderer.encode(
+                    encoder: renderEncoder,
+                    mesh: textMesh,
+                    atlasTexture: atlasTexture,
+                    uniformBuffer: ub,
+                    overridePipeline: hollowPipelineState,
+                )
+                outlinedUniformBufferIndex = (outlinedUniformBufferIndex + 1) % outlinedUniformBuffers.count
+            }
+        }
         renderEncoder.endEncoding()
-        
+
         if let drawable = view.currentDrawable {
             commandBuffer.present(drawable)
         }
         commandBuffer.commit()
     }
-    
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         updateProjection(for: size)
         rebuildTextMesh(for: view)
     }
-    
+
     @MainActor
     func rebuildTextMeshForCurrentView() {
-        guard let view = view else { return }
+        guard let view else { return }
         rebuildTextMesh(for: view)
     }
-    
+
     @MainActor
     func updateZoom(zoomScale: CGFloat) {
         self.zoomScale = max(zoomScale, 0.0001)
@@ -350,13 +297,14 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     // MARK: - Public API
+
     @MainActor
     func setRenderMode(isHollow: Bool) {
         renderMode = isHollow ? 1 : 0
     }
-    
+
     private static func composeParagraphText() -> String {
-        return """
+        """
         ABCDEFGHIJKLMNOPQRSTUVWXYZ
         abcdefghijklmnopqrstuvwxyz
         1234567890
@@ -371,6 +319,35 @@ private func matrix_ortho(width: Float, height: Float) -> matrix_float4x4 {
         SIMD4<Float>(sx, 0, 0, 0),
         SIMD4<Float>(0, sy, 0, 0),
         SIMD4<Float>(0, 0, 1, 0),
-        SIMD4<Float>(-1, 1, 0, 1)
+        SIMD4<Float>(-1, 1, 0, 1),
     ))
+}
+
+extension Renderer {
+    static func buildHollowPipeline(
+        device: MTLDevice,
+        pixelFormat: MTLPixelFormat,
+        sampleCount: Int,
+    ) throws -> MTLRenderPipelineState {
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.label = "Outlined.MSDF.Pipeline"
+        let library = try device.makeDefaultLibrary(bundle: .main)
+        descriptor.vertexFunction = library.makeFunction(name: "outlinedVertexShader")
+        descriptor.fragmentFunction = library.makeFunction(name: "outlinedFragmentShader")
+        descriptor.vertexDescriptor = MSDFText.MSDFTextRenderer.buildMetalVertexDescriptor()
+        descriptor.rasterSampleCount = sampleCount
+        descriptor.colorAttachments[0].pixelFormat = pixelFormat
+        descriptor.depthAttachmentPixelFormat = .invalid
+        descriptor.stencilAttachmentPixelFormat = .invalid
+        if let attachment = descriptor.colorAttachments[0] {
+            attachment.isBlendingEnabled = true
+            attachment.sourceRGBBlendFactor = .sourceAlpha
+            attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+            attachment.rgbBlendOperation = .add
+            attachment.sourceAlphaBlendFactor = .one
+            attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            attachment.alphaBlendOperation = .add
+        }
+        return try device.makeRenderPipelineState(descriptor: descriptor)
+    }
 }
